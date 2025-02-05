@@ -1,3 +1,5 @@
+![image](https://github.com/user-attachments/assets/88fb2c10-30de-4ae4-ad45-d24e8abb5c97)
+
 # ML_Kaggle_Titanic
 
 ## Why
