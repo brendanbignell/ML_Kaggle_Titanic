@@ -19,3 +19,27 @@ Comparison of LightGBM and FastTree and a deep learning ensemble model consistin
 	LBFGS Logistic Regression
 
 Usage of Nvidia GPU for training also tested although on this trivial ammount of data it is not needed.
+
+## Example Output
+
+Checking CUDA availability...
+CUDA found at: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6
+Loading data...
+
+Training Standard LightGBM...
+Starting LightGBM training...
+
+Training FastTree...
+Starting FastTree training...
+
+Training Deep Learning Model...
+Training ensemble model...
+
+Model Comparison Results:
+----------------------------------------------------------------------------------------------------
+Model Type           Accuracy        AUC             F1 Score        Training Time
+----------------------------------------------------------------------------------------------------
+Standard LightGBM    0.8799          0.9585          0.8366          0.20s
+FastTree             0.8878          0.9604          0.8471          0.21s
+Deep Learning        0.9910          0.9999          0.9883          0.88s
+----------------------------------------------------------------------------------------------------
