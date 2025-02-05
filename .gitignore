@@ -363,3 +363,5 @@ MigrationBackup/
 FodyWeavers.xsd
 /deep_learning_predictions.csv
 /standard_lightgbm_model.zip
+*.zip
+/fasttree_lightgbm_model.zip
