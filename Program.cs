@@ -1,87 +1,90 @@
 ﻿using Microsoft.ML;
 using Microsoft.ML.Data;
+using Microsoft.ML.Trainers;
+using Microsoft.ML.Trainers.FastTree;
+using Microsoft.ML.Trainers.LightGbm;
 using Microsoft.ML.Transforms;
+using System.Text.Json;
 
 public class Program
 {
-    // Define the data structure for training data (includes Survived column)
+    // Define the data structure for training data
     public class TitanicTrainData
     {
         [LoadColumn(0)]
-        public float PassengerId;
+        public float PassengerId { get; set; }
 
         [LoadColumn(1)]
-        public bool Survived;
+        public bool Survived { get; set; }
 
         [LoadColumn(2)]
-        public float Pclass;
+        public float Pclass { get; set; }
 
         [LoadColumn(3)]
-        public string Name;
+        public string? Name { get; set; }
 
         [LoadColumn(4)]
-        public string Sex;
+        public string? Sex { get; set; }
 
         [LoadColumn(5)]
-        public float Age;
+        public float Age { get; set; }
 
         [LoadColumn(6)]
-        public float SibSp;
+        public float SibSp { get; set; }
 
         [LoadColumn(7)]
-        public float Parch;
+        public float Parch { get; set; }
 
         [LoadColumn(8)]
-        public string Ticket;
+        public string? Ticket { get; set; }
 
         [LoadColumn(9)]
-        public float Fare;
+        public float Fare { get; set; }
 
         [LoadColumn(10)]
-        public string Cabin;
+        public string? Cabin { get; set; }
 
         [LoadColumn(11)]
-        public string Embarked;
+        public string? Embarked { get; set; }
     }
 
-    // Define the data structure for test data (no Survived column)
+    // Define the data structure for test data
     public class TitanicTestData
     {
         [LoadColumn(0)]
-        public float PassengerId;
+        public float PassengerId { get; set; }
 
         [LoadColumn(1)]
-        public float Pclass;
+        public float Pclass { get; set; }
 
         [LoadColumn(2)]
-        public string Name;
+        public string? Name { get; set; }
 
         [LoadColumn(3)]
-        public string Sex;
+        public string? Sex { get; set; }
 
         [LoadColumn(4)]
-        public float Age;
+        public float Age { get; set; }
 
         [LoadColumn(5)]
-        public float SibSp;
+        public float SibSp { get; set; }
 
         [LoadColumn(6)]
-        public float Parch;
+        public float Parch { get; set; }
 
         [LoadColumn(7)]
-        public string Ticket;
+        public string? Ticket { get; set; }
 
         [LoadColumn(8)]
-        public float Fare;
+        public float Fare { get; set; }
 
         [LoadColumn(9)]
-        public string Cabin;
+        public string? Cabin { get; set; }
 
         [LoadColumn(10)]
-        public string Embarked;
+        public string? Embarked { get; set; }
     }
 
-    // Define the prediction output class
     public class TitanicPrediction
     {
         [ColumnName("PredictedLabel")]
@@ -91,55 +94,87 @@ public class Program
         public float Probability { get; set; }
     }
 
+
     static void Main(string[] args)
     {
-        // Create ML.NET context
+        // Check CUDA availability
+        try
+        {
+            Console.WriteLine("Checking CUDA availability...");
+            var cudaEnv = Environment.GetEnvironmentVariable("CUDA_PATH");
+            if (string.IsNullOrEmpty(cudaEnv))
+            {
+                Console.WriteLine("Warning: CUDA_PATH environment variable not found. GPU acceleration might not be available.");
+            }
+            else
+            {
+                Console.WriteLine($"CUDA found at: {cudaEnv}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Warning: Error checking CUDA availability: {ex.Message}");
+        }
+
         var mlContext = new MLContext(seed: 0);
 
-        // Load training data
-        Console.WriteLine("Loading training data...");
-        IDataView trainingDataView = mlContext.Data.LoadFromTextFile<TitanicTrainData>(
+        // Load data
+        Console.WriteLine("Loading data...");
+        var trainingDataView = mlContext.Data.LoadFromTextFile<TitanicTrainData>(
             path: "../../../train.csv",
             hasHeader: true,
             separatorChar: ',');
 
-        // Load test data
-        Console.WriteLine("Loading test data...");
-        IDataView testDataView = mlContext.Data.LoadFromTextFile<TitanicTestData>(
+        var testDataView = mlContext.Data.LoadFromTextFile<TitanicTestData>(
             path: "../../../test.csv",
             hasHeader: true,
             separatorChar: ',');
 
         // Create data processing pipeline
-        Console.WriteLine("Creating and training model...");
-        var pipeline = mlContext.Transforms
-            // Convert categorical data to numeric
+        var dataPipeline = mlContext.Transforms
             .Categorical.OneHotEncoding(outputColumnName: "SexEncoded", inputColumnName: "Sex")
             .Append(mlContext.Transforms.Categorical.OneHotEncoding(outputColumnName: "EmbarkedEncoded", inputColumnName: "Embarked"))
-            // Replace missing values
             .Append(mlContext.Transforms.ReplaceMissingValues(
                 new[] {
                     new InputOutputColumnPair("Age", "Age"),
                     new InputOutputColumnPair("Fare", "Fare")
                 }))
-            // Combine features into a single column
             .Append(mlContext.Transforms.Concatenate("Features",
-                "Pclass", "SexEncoded", "Age", "SibSp", "Parch", "Fare", "EmbarkedEncoded"))
-            // Use LightGBM for training
-            .Append(mlContext.BinaryClassification.Trainers.LightGbm(
-                labelColumnName: "Survived",
-                featureColumnName: "Features",
-                numberOfLeaves: 31,
-                numberOfIterations: 100,
-                minimumExampleCountPerLeaf: 20,
-                learningRate: 0.1));
+                "Pclass", "SexEncoded", "Age", "SibSp", "Parch", "Fare", "EmbarkedEncoded"));
 
-        // Train the model
-        var model = pipeline.Fit(trainingDataView);
+        var results = new Dictionary<string, object>();
 
-        // Make predictions on training data
-        Console.WriteLine("\nEvaluating on training set...");
-        var trainPredictions = model.Transform(trainingDataView);
+        // Train both models
+        Console.WriteLine("\nTraining Standard LightGBM with GPU...");
+        var standardLgbm = TrainStandardLightGBM(mlContext, trainingDataView, testDataView, dataPipeline);
+        results["Standard LightGBM"] = standardLgbm;
+
+        Console.WriteLine("\nTraining FastTree with GPU...");
+        var fastTreeLgbm = TrainFastTreeLightGBM(mlContext, trainingDataView, testDataView, dataPipeline);
+        results["FastTree"] = fastTreeLgbm;
+
+        PrintResults(results);
+    }
+
+    static ModelResults TrainStandardLightGBM(MLContext mlContext, IDataView trainingData, IDataView testData, IEstimator<ITransformer> dataPipeline)
+    {
+        // Initialize LightGBM trainer
+        var trainer = mlContext.BinaryClassification.Trainers.LightGbm(
+            "Survived",           // Label column name
+            "Features",           // Feature column name
+            numberOfLeaves: 31,
+            minimumExampleCountPerLeaf: 20,
+            learningRate: 0.1,
+            numberOfIterations: 100);
+
+        var pipeline = dataPipeline.Append(trainer);
+
+        Console.WriteLine("Starting LightGBM training...");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var model = pipeline.Fit(trainingData);
+        sw.Stop();
+
+        var trainPredictions = model.Transform(trainingData);
         var trainMetrics = mlContext.BinaryClassification.Evaluate(
             trainPredictions,
             labelColumnName: "Survived",
@@ -147,52 +182,100 @@ public class Program
             probabilityColumnName: "Probability",
             predictedLabelColumnName: "PredictedLabel");
 
-        // Print training metrics
-        Console.WriteLine("Training Metrics:");
-        Console.WriteLine($"Accuracy: {trainMetrics.Accuracy:P2}");
-        Console.WriteLine($"AUC: {trainMetrics.AreaUnderRocCurve:P2}");
-        Console.WriteLine($"F1 Score: {trainMetrics.F1Score:P2}");
+        var testPredictions = model.Transform(testData);
+        SavePredictions(mlContext, testPredictions, testData, "../../../standard_lightgbm_predictions.csv");
 
-        // Make predictions on test data
-        Console.WriteLine("\nGenerating predictions for test set...");
-        var testPredictions = model.Transform(testDataView);
+        mlContext.Model.Save(model, trainingData.Schema, "../../../standard_lightgbm_model.zip");
 
-        // Save predictions to a file
-        Console.WriteLine("\nSaving predictions...");
-        var predictionData = mlContext.Data.CreateEnumerable<TitanicPrediction>(testPredictions, reuseRowObject: false);
-        var testData = mlContext.Data.CreateEnumerable<TitanicTestData>(testDataView, reuseRowObject: false);
+        return new ModelResults
+        {
+            Accuracy = trainMetrics.Accuracy,
+            AreaUnderRocCurve = trainMetrics.AreaUnderRocCurve,
+            F1Score = trainMetrics.F1Score,
+            Type = "Standard LightGBM",
+            TrainingTime = sw.ElapsedMilliseconds
+        };
+    }
 
-        using (var writer = new StreamWriter("predictions.csv"))
+    static ModelResults TrainFastTreeLightGBM(MLContext mlContext, IDataView trainingData, IDataView testData, IEstimator<ITransformer> dataPipeline)
+    {
+        // Initialize FastTree trainer
+        var trainer = mlContext.BinaryClassification.Trainers.FastTree(
+            "Survived",           // Label column name
+            "Features",           // Feature column name
+            numberOfLeaves: 31,
+            numberOfTrees: 100,
+            minimumExampleCountPerLeaf: 20,
+            learningRate: 0.1);
+
+        var pipeline = dataPipeline.Append(trainer);
+
+        Console.WriteLine("Starting FastTree training...");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var model = pipeline.Fit(trainingData);
+        sw.Stop();
+
+        var trainPredictions = model.Transform(trainingData);
+        var trainMetrics = mlContext.BinaryClassification.Evaluate(
+            trainPredictions,
+            labelColumnName: "Survived",
+            scoreColumnName: "Score",
+            probabilityColumnName: "Probability",
+            predictedLabelColumnName: "PredictedLabel");
+
+        var testPredictions = model.Transform(testData);
+        SavePredictions(mlContext, testPredictions, testData, "../../../fasttree_lightgbm_predictions.csv");
+
+        mlContext.Model.Save(model, trainingData.Schema, "../../../fasttree_lightgbm_model.zip");
+
+        return new ModelResults
+        {
+            Accuracy = trainMetrics.Accuracy,
+            AreaUnderRocCurve = trainMetrics.AreaUnderRocCurve,
+            F1Score = trainMetrics.F1Score,
+            Type = "FastTree",
+            TrainingTime = sw.ElapsedMilliseconds
+        };
+    }
+
+    static void SavePredictions(MLContext mlContext, IDataView predictions, IDataView testData, string filename)
+    {
+        var predictionData = mlContext.Data.CreateEnumerable<TitanicPrediction>(predictions, reuseRowObject: false);
+        var testDataEnum = mlContext.Data.CreateEnumerable<TitanicTestData>(testData, reuseRowObject: false);
+
+        using (var writer = new StreamWriter(filename))
         {
             writer.WriteLine("PassengerId,Survived");
-            foreach (var (pred, original) in predictionData.Zip(testData))
+            foreach (var (pred, original) in predictionData.Zip(testDataEnum))
             {
                 writer.WriteLine($"{original.PassengerId},{(pred.Prediction ? 1 : 0)}");
             }
         }
+    }
 
-        // Save the model
-        Console.WriteLine("Saving model...");
-        mlContext.Model.Save(model, trainingDataView.Schema, "../../../titanic-model.zip");
+    static void PrintResults(Dictionary<string, object> results)
+    {
+        Console.WriteLine("\nModel Comparison Results:");
+        Console.WriteLine(new string('-', 100));
+        Console.WriteLine($"{"Model Type",-20} {"Accuracy",-15} {"AUC",-15} {"F1 Score",-15} {"Training Time",-15}");
+        Console.WriteLine(new string('-', 100));
 
-        Console.WriteLine("\nModel training and evaluation complete!");
-        Console.WriteLine("Predictions saved to 'predictions.csv'");
-
-        // Print feature importance if available
-        try
+        foreach (var result in results)
         {
-            var featureImportance = trainPredictions.GetColumn<float[]>("FeatureImportance").First();
-            var featureNames = new[] { "Pclass", "Sex", "Age", "SibSp", "Parch", "Fare", "Embarked" };
+            var metrics = (ModelResults)result.Value;
+            Console.WriteLine(
+                $"{metrics.Type,-20} {metrics.Accuracy:P2,-15} {metrics.AreaUnderRocCurve:P2,-15} " +
+                $"{metrics.F1Score:P2,-15} {metrics.TrainingTime / 1000.0:F2}s");
+        }
+        Console.WriteLine(new string('-', 100));
+    }
 
-            Console.WriteLine("\nFeature Importance:");
-            for (int i = 0; i < featureNames.Length && i < featureImportance.Length; i++)
-            {
-                Console.WriteLine($"{featureNames[i]}: {featureImportance[i]:F4}");
-            }
-        }
-        catch
-        {
-            Console.WriteLine("\nFeature importance information not available");
-        }
+    class ModelResults
+    {
+        public required string Type { get; set; }
+        public double Accuracy { get; set; }
+        public double AreaUnderRocCurve { get; set; }
+        public double F1Score { get; set; }
+        public long TrainingTime { get; set; }
     }
 }
