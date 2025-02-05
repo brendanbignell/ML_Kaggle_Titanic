@@ -14,6 +14,7 @@ The dataset is from Kaggle and the goal is to predict whether a passenger surviv
 The dataset contains 891 rows and 12 columns.
 
 Comparison of LightGBM and FastTree and a deep learning ensemble model consisting of:
+
 	SDCA Logistic Regression
 	FastForest
 	LBFGS Logistic Regression
