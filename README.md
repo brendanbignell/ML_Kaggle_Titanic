@@ -13,6 +13,9 @@ This is a project to predict the survival of passengers on the Titanic.
 The dataset is from Kaggle and the goal is to predict whether a passenger survived or not. 
 The dataset contains 891 rows and 12 columns.
 
-LightGBM and FastTree models are compared.
+Comparison of LightGBM and FastTree and a deep learning ensemble model consisting of:
+	SDCA Logistic Regression
+	FastForest
+	LBFGS Logistic Regression
 
-Usage of Nvidia GPU tested.
+Usage of Nvidia GPU for training also tested although on this trivial ammount of data it is not needed.
