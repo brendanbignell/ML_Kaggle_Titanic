@@ -22,8 +22,8 @@ Usage of Nvidia GPU for training also tested although on this trivial ammount of
 
 ## Example Output
 
-`Model Comparison Results:  
-`Model Type           Accuracy        AUC             F1 Score        Training Time   
-`Standard LightGBM    0.8799          0.9585          0.8366          0.20s  
-`FastTree             0.8878          0.9604          0.8471          0.21s  
-`Deep Learning        0.9910          0.9999          0.9883          0.88s  
+	Model Comparison Results:  
+	Model Type           Accuracy        AUC             F1 Score        Training Time   
+	Standard LightGBM    0.8799          0.9585          0.8366          0.20s
+	FastTree             0.8878          0.9604          0.8471          0.21s  
+	Deep Learning        0.9910          0.9999          0.9883          0.88s  
