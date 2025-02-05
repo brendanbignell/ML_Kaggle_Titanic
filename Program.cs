@@ -1,12 +1,11 @@
 ﻿using Microsoft.ML;
 using Microsoft.ML.Data;
 using Microsoft.ML.Transforms;
-using System.Data;
 
 public class Program
 {
-    // Define the data structure that matches your CSV file
-    public class TitanicData
+    // Define the data structure for training data (includes Survived column)
+    public class TitanicTrainData
     {
         [LoadColumn(0)]
         public float PassengerId;
@@ -45,6 +44,43 @@ public class Program
         public string Embarked;
     }
 
+    // Define the data structure for test data (no Survived column)
+    public class TitanicTestData
+    {
+        [LoadColumn(0)]
+        public float PassengerId;
+
+        [LoadColumn(1)]
+        public float Pclass;
+
+        [LoadColumn(2)]
+        public string Name;
+
+        [LoadColumn(3)]
+        public string Sex;
+
+        [LoadColumn(4)]
+        public float Age;
+
+        [LoadColumn(5)]
+        public float SibSp;
+
+        [LoadColumn(6)]
+        public float Parch;
+
+        [LoadColumn(7)]
+        public string Ticket;
+
+        [LoadColumn(8)]
+        public float Fare;
+
+        [LoadColumn(9)]
+        public string Cabin;
+
+        [LoadColumn(10)]
+        public string Embarked;
+    }
+
     // Define the prediction output class
     public class TitanicPrediction
     {
@@ -60,13 +96,22 @@ public class Program
         // Create ML.NET context
         var mlContext = new MLContext(seed: 0);
 
-        // Load data
-        IDataView trainingDataView = mlContext.Data.LoadFromTextFile<TitanicData>(
+        // Load training data
+        Console.WriteLine("Loading training data...");
+        IDataView trainingDataView = mlContext.Data.LoadFromTextFile<TitanicTrainData>(
             path: "../../../train.csv",
             hasHeader: true,
             separatorChar: ',');
 
+        // Load test data
+        Console.WriteLine("Loading test data...");
+        IDataView testDataView = mlContext.Data.LoadFromTextFile<TitanicTestData>(
+            path: "../../../test.csv",
+            hasHeader: true,
+            separatorChar: ',');
+
         // Create data processing pipeline
+        Console.WriteLine("Creating and training model...");
         var pipeline = mlContext.Transforms
             // Convert categorical data to numeric
             .Categorical.OneHotEncoding(outputColumnName: "SexEncoded", inputColumnName: "Sex")
@@ -90,45 +135,64 @@ public class Program
                 learningRate: 0.1));
 
         // Train the model
-        Console.WriteLine("Training the model...");
         var model = pipeline.Fit(trainingDataView);
 
         // Make predictions on training data
-        var predictions = model.Transform(trainingDataView);
-
-        // Evaluate the model
-        var metrics = mlContext.BinaryClassification.Evaluate(predictions,
+        Console.WriteLine("\nEvaluating on training set...");
+        var trainPredictions = model.Transform(trainingDataView);
+        var trainMetrics = mlContext.BinaryClassification.Evaluate(
+            trainPredictions,
             labelColumnName: "Survived",
             scoreColumnName: "Score",
             probabilityColumnName: "Probability",
             predictedLabelColumnName: "PredictedLabel");
 
-        // Print metrics
-        Console.WriteLine($"Accuracy: {metrics.Accuracy:P2}");
-        Console.WriteLine($"AUC: {metrics.AreaUnderRocCurve:P2}");
-        Console.WriteLine($"F1 Score: {metrics.F1Score:P2}");
+        // Print training metrics
+        Console.WriteLine("Training Metrics:");
+        Console.WriteLine($"Accuracy: {trainMetrics.Accuracy:P2}");
+        Console.WriteLine($"AUC: {trainMetrics.AreaUnderRocCurve:P2}");
+        Console.WriteLine($"F1 Score: {trainMetrics.F1Score:P2}");
 
-        // Create prediction engine
-        var predictionEngine = mlContext.Model.CreatePredictionEngine<TitanicData, TitanicPrediction>(model);
+        // Make predictions on test data
+        Console.WriteLine("\nGenerating predictions for test set...");
+        var testPredictions = model.Transform(testDataView);
 
-        // Example prediction
-        var samplePassenger = new TitanicData
+        // Save predictions to a file
+        Console.WriteLine("\nSaving predictions...");
+        var predictionData = mlContext.Data.CreateEnumerable<TitanicPrediction>(testPredictions, reuseRowObject: false);
+        var testData = mlContext.Data.CreateEnumerable<TitanicTestData>(testDataView, reuseRowObject: false);
+
+        using (var writer = new StreamWriter("predictions.csv"))
         {
-            Pclass = 3,
-            Sex = "female",
-            Age = 26,
-            SibSp = 0,
-            Parch = 0,
-            Fare = 7.925f,
-            Embarked = "S"
-        };
-
-        var prediction = predictionEngine.Predict(samplePassenger);
-        Console.WriteLine($"\nSample Prediction:");
-        Console.WriteLine($"Predicted survival: {prediction.Prediction}");
-        Console.WriteLine($"Probability: {prediction.Probability:P2}");
+            writer.WriteLine("PassengerId,Survived");
+            foreach (var (pred, original) in predictionData.Zip(testData))
+            {
+                writer.WriteLine($"{original.PassengerId},{(pred.Prediction ? 1 : 0)}");
+            }
+        }
 
         // Save the model
+        Console.WriteLine("Saving model...");
         mlContext.Model.Save(model, trainingDataView.Schema, "../../../titanic-model.zip");
+
+        Console.WriteLine("\nModel training and evaluation complete!");
+        Console.WriteLine("Predictions saved to 'predictions.csv'");
+
+        // Print feature importance if available
+        try
+        {
+            var featureImportance = trainPredictions.GetColumn<float[]>("FeatureImportance").First();
+            var featureNames = new[] { "Pclass", "Sex", "Age", "SibSp", "Parch", "Fare", "Embarked" };
+
+            Console.WriteLine("\nFeature Importance:");
+            for (int i = 0; i < featureNames.Length && i < featureImportance.Length; i++)
+            {
+                Console.WriteLine($"{featureNames[i]}: {featureImportance[i]:F4}");
+            }
+        }
+        catch
+        {
+            Console.WriteLine("\nFeature importance information not available");
+        }
     }
 }
