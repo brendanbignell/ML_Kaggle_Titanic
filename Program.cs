@@ -5,10 +5,10 @@ using Microsoft.ML.Trainers.FastTree;
 using Microsoft.ML.Trainers.LightGbm;
 using Microsoft.ML.Transforms;
 using System.Text.Json;
+using System.Diagnostics;
 
 public class Program
 {
-    // Define the data structure for training data
     public class TitanicTrainData
     {
         [LoadColumn(0)]
@@ -48,7 +48,6 @@ public class Program
         public string? Embarked { get; set; }
     }
 
-    // Define the data structure for test data
     public class TitanicTestData
     {
         [LoadColumn(0)]
@@ -94,7 +93,6 @@ public class Program
         public float Probability { get; set; }
     }
 
-
     static void Main(string[] args)
     {
         // Check CUDA availability
@@ -139,19 +137,26 @@ public class Program
                     new InputOutputColumnPair("Age", "Age"),
                     new InputOutputColumnPair("Fare", "Fare")
                 }))
+            .Append(mlContext.Transforms.NormalizeMinMax("Age"))
+            .Append(mlContext.Transforms.NormalizeMinMax("Fare"))
+            .Append(mlContext.Transforms.NormalizeMinMax("Pclass"))
             .Append(mlContext.Transforms.Concatenate("Features",
                 "Pclass", "SexEncoded", "Age", "SibSp", "Parch", "Fare", "EmbarkedEncoded"));
 
         var results = new Dictionary<string, object>();
 
-        // Train both models
-        Console.WriteLine("\nTraining Standard LightGBM with GPU...");
+        // Train all models
+        Console.WriteLine("\nTraining Standard LightGBM...");
         var standardLgbm = TrainStandardLightGBM(mlContext, trainingDataView, testDataView, dataPipeline);
         results["Standard LightGBM"] = standardLgbm;
 
-        Console.WriteLine("\nTraining FastTree with GPU...");
+        Console.WriteLine("\nTraining FastTree...");
         var fastTreeLgbm = TrainFastTreeLightGBM(mlContext, trainingDataView, testDataView, dataPipeline);
         results["FastTree"] = fastTreeLgbm;
+
+        Console.WriteLine("\nTraining Deep Learning Model...");
+        var deepLearning = TrainDeepLearning(mlContext, trainingDataView, testDataView, dataPipeline);
+        results["Deep Learning"] = deepLearning;
 
         PrintResults(results);
     }
@@ -170,7 +175,7 @@ public class Program
         var pipeline = dataPipeline.Append(trainer);
 
         Console.WriteLine("Starting LightGBM training...");
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var sw = Stopwatch.StartNew();
         var model = pipeline.Fit(trainingData);
         sw.Stop();
 
@@ -211,7 +216,7 @@ public class Program
         var pipeline = dataPipeline.Append(trainer);
 
         Console.WriteLine("Starting FastTree training...");
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var sw = Stopwatch.StartNew();
         var model = pipeline.Fit(trainingData);
         sw.Stop();
 
@@ -234,6 +239,104 @@ public class Program
             AreaUnderRocCurve = trainMetrics.AreaUnderRocCurve,
             F1Score = trainMetrics.F1Score,
             Type = "FastTree",
+            TrainingTime = sw.ElapsedMilliseconds
+        };
+    }
+
+    static ModelResults TrainDeepLearning(MLContext mlContext, IDataView trainingData, IDataView testData, IEstimator<ITransformer> dataPipeline)
+    {
+        // Enhanced preprocessing pipeline
+        var enhancedPipeline = mlContext.Transforms
+            .Categorical.OneHotEncoding(outputColumnName: "SexEncoded", inputColumnName: "Sex")
+            .Append(mlContext.Transforms.Categorical.OneHotEncoding(outputColumnName: "EmbarkedEncoded", inputColumnName: "Embarked"))
+            .Append(mlContext.Transforms.ReplaceMissingValues(
+                new[] {
+                    new InputOutputColumnPair("Age", "Age"),
+                    new InputOutputColumnPair("Fare", "Fare")
+                }))
+            // Enhanced normalization
+            .Append(mlContext.Transforms.NormalizeMinMax("Age"))
+            .Append(mlContext.Transforms.NormalizeMinMax("Fare"))
+            .Append(mlContext.Transforms.NormalizeMinMax("Pclass"))
+            .Append(mlContext.Transforms.NormalizeMinMax("SibSp"))
+            .Append(mlContext.Transforms.NormalizeMinMax("Parch"))
+            // Combine all features
+            .Append(mlContext.Transforms.Concatenate("Features",
+                "Pclass", "SexEncoded", "Age", "SibSp", "Parch",
+                "Fare", "EmbarkedEncoded"))
+            // Add training optimizations
+            .Append(mlContext.Transforms.NormalizeMeanVariance("Features"))
+            .AppendCacheCheckpoint(mlContext);
+
+        // Create stacking ensemble
+        var trainer1 = mlContext.BinaryClassification.Trainers.SdcaLogisticRegression(
+            new SdcaLogisticRegressionBinaryTrainer.Options
+            {
+                LabelColumnName = "Survived",
+                FeatureColumnName = "Features",
+                MaximumNumberOfIterations = 1000,
+                L2Regularization = 0.00001f,
+                L1Regularization = 0.00001f
+            });
+
+        var trainer2 = mlContext.BinaryClassification.Trainers.FastForest(
+            new FastForestBinaryTrainer.Options
+            {
+                LabelColumnName = "Survived",
+                FeatureColumnName = "Features",
+                NumberOfTrees = 200,
+                NumberOfLeaves = 50,
+                MinimumExampleCountPerLeaf = 10
+            });
+
+        var trainer3 = mlContext.BinaryClassification.Trainers.LbfgsLogisticRegression(
+            new LbfgsLogisticRegressionBinaryTrainer.Options
+            {
+                LabelColumnName = "Survived",
+                FeatureColumnName = "Features",
+                L1Regularization = 0.00001f,
+                L2Regularization = 0.00001f,
+                OptimizationTolerance = 1e-8f,
+                HistorySize = 100,
+                MaximumNumberOfIterations = 1000
+            });
+
+        // Create ensemble pipeline with multiple models
+        var ensemblePipeline = enhancedPipeline
+            .Append(trainer1)
+            .Append(trainer2)
+            .Append(trainer3)
+            .Append(mlContext.BinaryClassification.Calibrators.Platt(labelColumnName: "Survived"));
+
+        // Train model
+        Console.WriteLine("Training ensemble model...");
+        var sw = Stopwatch.StartNew();
+
+        var model = ensemblePipeline.Fit(trainingData);
+        sw.Stop();
+
+        // Evaluate on training data
+        var trainPredictions = model.Transform(trainingData);
+        var metrics = mlContext.BinaryClassification.Evaluate(
+            trainPredictions,
+            labelColumnName: "Survived",
+            scoreColumnName: "Score",
+            probabilityColumnName: "Probability",
+            predictedLabelColumnName: "PredictedLabel");
+
+        // Generate predictions for test set
+        var testPredictions = model.Transform(testData);
+        SavePredictions(mlContext, testPredictions, testData, "../../../deep_learning_predictions.csv");
+
+        // Save the model
+        mlContext.Model.Save(model, trainingData.Schema, "../../../deep_learning_model.zip");
+
+        return new ModelResults
+        {
+            Accuracy = metrics.Accuracy,
+            AreaUnderRocCurve = metrics.AreaUnderRocCurve,
+            F1Score = metrics.F1Score,
+            Type = "Deep Learning",
             TrainingTime = sw.ElapsedMilliseconds
         };
     }
@@ -263,9 +366,12 @@ public class Program
         foreach (var result in results)
         {
             var metrics = (ModelResults)result.Value;
-            Console.WriteLine(
-                $"{metrics.Type,-20} {metrics.Accuracy:P2,-15} {metrics.AreaUnderRocCurve:P2,-15} " +
-                $"{metrics.F1Score:P2,-15} {metrics.TrainingTime / 1000.0:F2}s");
+            var accuracy = metrics.Accuracy.ToString("F4").PadRight(15);
+            var auc = metrics.AreaUnderRocCurve.ToString("F4").PadRight(15);
+            var f1 = metrics.F1Score.ToString("F4").PadRight(15);
+            var time = $"{metrics.TrainingTime / 1000.0:F2}s".PadRight(15);
+
+            Console.WriteLine($"{metrics.Type,-20} {accuracy} {auc} {f1} {time}");
         }
         Console.WriteLine(new string('-', 100));
     }
