@@ -19,7 +19,7 @@ Comparison of LightGBM and FastTree and a deep learning ensemble model consistin
 	FastForest
 	LBFGS Logistic Regression
 
-Usage of Nvidia GPU for training also tested although on this trivial ammount of data it is not needed.
+Usage of Nvidia GPU for training also tested, although on this trivial amount of data it is not needed.
 
 ## Example Output
 
